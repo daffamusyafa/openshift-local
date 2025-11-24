@@ -189,7 +189,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: daffamusyafa/rs-app-fe:v1.1
+          image: daffamusyafa/fe-oclocal:1
           imagePullPolicy: Always
           ports:
             - containerPort: 80
