@@ -10,6 +10,7 @@ metadata:
 # ===================================================================
 # 2. CONFIGURATION & SECRETS
 # ===================================================================
+# ConfigMap untuk Backend (Non-sensitive data)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -22,6 +23,7 @@ data:
   PGPORT: "5432"
 
 ---
+# Secret untuk Database (Sensitive data)
 apiVersion: v1
 kind: Secret
 metadata:
@@ -34,6 +36,7 @@ stringData:
   POSTGRES_DB: "rs_db"
 
 ---
+# Secret untuk Backend (Sensitive data)
 apiVersion: v1
 kind: Secret
 metadata:
@@ -47,6 +50,7 @@ stringData:
 # ===================================================================
 # 3. DATABASE TIER (PostgreSQL)
 # ===================================================================
+# Persistent Volume Claim (Storage)
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -60,6 +64,7 @@ spec:
       storage: 1Gi
 
 ---
+# Database Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -69,9 +74,6 @@ metadata:
     app: db
 spec:
   replicas: 1
-  # PERBAIKAN: Hapus rollingUpdate karena type Recreate tidak support itu
-  strategy:
-    type: Recreate 
   selector:
     matchLabels:
       app: db
@@ -97,6 +99,7 @@ spec:
             claimName: postgres-pvc
 
 ---
+# Database Service
 apiVersion: v1
 kind: Service
 metadata:
@@ -115,6 +118,7 @@ spec:
 # ===================================================================
 # 4. BACKEND TIER
 # ===================================================================
+# Backend Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -124,11 +128,6 @@ metadata:
     app: backend
 spec:
   replicas: 3
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
   selector:
     matchLabels:
       app: backend
@@ -150,11 +149,11 @@ spec:
                 name: backend-secret
 
 ---
-# PERBAIKAN: Nama Service jadi 'backend' & Tipe ClusterIP
+# Backend Service
 apiVersion: v1
 kind: Service
 metadata:
-  name: backend        # <--- PENTING: Sesuai dengan proxy_pass nginx
+  name: backend
   namespace: rs-app
 spec:
   selector:
@@ -163,12 +162,14 @@ spec:
     - protocol: TCP
       port: 5000
       targetPort: 5000
-  type: ClusterIP
+  # Tipe LoadBalancer (Sesuai permintaan)
+  type: LoadBalancer
 
 ---
 # ===================================================================
 # 5. FRONTEND TIER
 # ===================================================================
+# Frontend Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -178,11 +179,6 @@ metadata:
     app: frontend
 spec:
   replicas: 4
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 25%
-      maxUnavailable: 0
   selector:
     matchLabels:
       app: frontend
@@ -193,21 +189,13 @@ spec:
     spec:
       containers:
         - name: frontend
-          # Pastikan nama image ini sesuai dengan yang kamu push terakhir
-          image: daffamusyafa/oc-fe:v1.1 
+          image: daffamusyafa/oc-fe:v1.1
           imagePullPolicy: Always
           ports:
             - containerPort: 80
-          # Health check (Optional tapi bagus)
-          readinessProbe:
-            httpGet:
-              path: /
-              port: 80
-            initialDelaySeconds: 5
-            periodSeconds: 5
 
 ---
-# PERBAIKAN: Tipe jadi ClusterIP
+# Frontend Service
 apiVersion: v1
 kind: Service
 metadata:
@@ -218,20 +206,7 @@ spec:
     app: frontend
   ports:
     - protocol: TCP
-      port: 8080
-      targetPort: 80
-  type: ClusterIP
-
----
-# PERBAIKAN: Tambah Route (Pintu Akses Browser)
-apiVersion: route.openshift.io/v1
-kind: Route
-metadata:
-  name: frontend-route
-  namespace: rs-app
-spec:
-  to:
-    kind: Service
-    name: frontend-svc
-  port:
-    targetPort: 8080
+      port: 8080        # Port yang diakses user
+      targetPort: 80    # Port container aplikasi
+  # Tipe LoadBalancer (Sesuai permintaan)
+  type: LoadBalancer
