@@ -138,7 +138,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: daffamusyafa/rs-app-be:v1.0
+          image: daffamusyafa/rs-app-be:v1.0.5
           imagePullPolicy: Always
           ports:
             - containerPort: 5000
