@@ -1,3 +1,6 @@
+# ===================================================================
+# 1. NAMESPACE
+# ===================================================================
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -5,20 +8,8 @@ metadata:
 
 ---
 # ===================================================================
-#  1. CONFIGURATION & SECRETS
+# 2. CONFIGURATION & SECRETS
 # ===================================================================
-apiVersion: v1
-kind: Secret
-metadata:
-  name: postgres-secret
-  namespace: rs-app
-type: Opaque
-stringData:
-  POSTGRES_USER: "admin"
-  POSTGRES_PASSWORD: "password123"
-  POSTGRES_DB: "rs_db"
-
----
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -34,6 +25,18 @@ data:
 apiVersion: v1
 kind: Secret
 metadata:
+  name: postgres-secret
+  namespace: rs-app
+type: Opaque
+stringData:
+  POSTGRES_USER: "admin"
+  POSTGRES_PASSWORD: "password123"
+  POSTGRES_DB: "rs_db"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
   name: backend-secret
   namespace: rs-app
 type: Opaque
@@ -42,7 +45,7 @@ stringData:
 
 ---
 # ===================================================================
-#  2. DATABASE LAYER (PostgreSQL)
+# 3. DATABASE TIER (PostgreSQL)
 # ===================================================================
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -66,8 +69,9 @@ metadata:
     app: db
 spec:
   replicas: 1
+  # PERBAIKAN: Hapus rollingUpdate karena type Recreate tidak support itu
   strategy:
-    type: Recreate # Diperlukan untuk volume ReadWriteOnce
+    type: Recreate 
   selector:
     matchLabels:
       app: db
@@ -87,17 +91,6 @@ spec:
           volumeMounts:
             - name: postgres-storage
               mountPath: /var/lib/postgresql/data
-          # Probe Kesehatan Database
-          readinessProbe:
-            exec:
-              command: ["pg_isready", "-U", "admin"]
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          livenessProbe:
-            exec:
-              command: ["pg_isready", "-U", "admin"]
-            initialDelaySeconds: 10
-            periodSeconds: 20
       volumes:
         - name: postgres-storage
           persistentVolumeClaim:
@@ -120,7 +113,7 @@ spec:
 
 ---
 # ===================================================================
-#  3. BACKEND LAYER
+# 4. BACKEND TIER
 # ===================================================================
 apiVersion: apps/v1
 kind: Deployment
@@ -131,7 +124,6 @@ metadata:
     app: backend
 spec:
   replicas: 3
-  # Strategi Zero Downtime
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -147,7 +139,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: daffamusyafa/rs-app-be:v1.1
+          image: daffamusyafa/rs-app-be:v1.0
           imagePullPolicy: Always
           ports:
             - containerPort: 5000
@@ -156,24 +148,13 @@ spec:
                 name: backend-config
             - secretRef:
                 name: backend-secret
-          # Probe Kesehatan Backend
-          readinessProbe:
-            tcpSocket:
-              port: 5000
-            initialDelaySeconds: 5
-            periodSeconds: 5
-            failureThreshold: 3
-          livenessProbe:
-            tcpSocket:
-              port: 5000
-            initialDelaySeconds: 15
-            periodSeconds: 20
 
 ---
+# PERBAIKAN: Nama Service jadi 'backend' & Tipe ClusterIP
 apiVersion: v1
 kind: Service
 metadata:
-  name: backend-svc
+  name: backend        # <--- PENTING: Sesuai dengan proxy_pass nginx
   namespace: rs-app
 spec:
   selector:
@@ -182,11 +163,11 @@ spec:
     - protocol: TCP
       port: 5000
       targetPort: 5000
-  type: LoadBalancer
+  type: ClusterIP
 
 ---
 # ===================================================================
-#  4. FRONTEND LAYER
+# 5. FRONTEND TIER
 # ===================================================================
 apiVersion: apps/v1
 kind: Deployment
@@ -197,7 +178,6 @@ metadata:
     app: frontend
 spec:
   replicas: 4
-  # Strategi Zero Downtime
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -213,25 +193,21 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: daffamusyafa/oc-fe:v1.1
+          # Pastikan nama image ini sesuai dengan yang kamu push terakhir
+          image: daffamusyafa/oc-fe:v1.1 
           imagePullPolicy: Always
           ports:
             - containerPort: 80
-          # Probe Kesehatan Frontend
+          # Health check (Optional tapi bagus)
           readinessProbe:
             httpGet:
               path: /
               port: 80
             initialDelaySeconds: 5
             periodSeconds: 5
-          livenessProbe:
-            httpGet:
-              path: /
-              port: 80
-            initialDelaySeconds: 15
-            periodSeconds: 20
 
 ---
+# PERBAIKAN: Tipe jadi ClusterIP
 apiVersion: v1
 kind: Service
 metadata:
@@ -244,4 +220,18 @@ spec:
     - protocol: TCP
       port: 8080
       targetPort: 80
-  type: LoadBalancer
+  type: ClusterIP
+
+---
+# PERBAIKAN: Tambah Route (Pintu Akses Browser)
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: frontend-route
+  namespace: rs-app
+spec:
+  to:
+    kind: Service
+    name: frontend-svc
+  port:
+    targetPort: 8080
