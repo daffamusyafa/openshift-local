@@ -1,6 +1,3 @@
-# ===================================================================
-# 1. NAMESPACE
-# ===================================================================
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -8,22 +5,8 @@ metadata:
 
 ---
 # ===================================================================
-# 2. CONFIGURATION & SECRETS
+#  1. CONFIGURATION & SECRETS
 # ===================================================================
-# ConfigMap untuk Backend (Non-sensitive data)
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: backend-config
-  namespace: rs-app
-data:
-  PGHOST: "db-svc"
-  PGUSER: "admin"
-  PGDATABASE: "rs_db"
-  PGPORT: "5432"
-
----
-# Secret untuk Database (Sensitive data)
 apiVersion: v1
 kind: Secret
 metadata:
@@ -36,7 +19,18 @@ stringData:
   POSTGRES_DB: "rs_db"
 
 ---
-# Secret untuk Backend (Sensitive data)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: rs-app
+data:
+  PGHOST: "db-svc"
+  PGUSER: "admin"
+  PGDATABASE: "rs_db"
+  PGPORT: "5432"
+
+---
 apiVersion: v1
 kind: Secret
 metadata:
@@ -48,9 +42,8 @@ stringData:
 
 ---
 # ===================================================================
-# 3. DATABASE TIER (PostgreSQL)
+#  2. DATABASE LAYER (PostgreSQL)
 # ===================================================================
-# Persistent Volume Claim (Storage)
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -64,7 +57,6 @@ spec:
       storage: 1Gi
 
 ---
-# Database Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -74,6 +66,8 @@ metadata:
     app: db
 spec:
   replicas: 1
+  strategy:
+    type: Recreate # Diperlukan untuk volume ReadWriteOnce
   selector:
     matchLabels:
       app: db
@@ -93,13 +87,23 @@ spec:
           volumeMounts:
             - name: postgres-storage
               mountPath: /var/lib/postgresql/data
+          # Probe Kesehatan Database
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "admin"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "admin"]
+            initialDelaySeconds: 10
+            periodSeconds: 20
       volumes:
         - name: postgres-storage
           persistentVolumeClaim:
             claimName: postgres-pvc
 
 ---
-# Database Service
 apiVersion: v1
 kind: Service
 metadata:
@@ -116,9 +120,8 @@ spec:
 
 ---
 # ===================================================================
-# 4. BACKEND TIER
+#  3. BACKEND LAYER
 # ===================================================================
-# Backend Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -128,6 +131,12 @@ metadata:
     app: backend
 spec:
   replicas: 3
+  # Strategi Zero Downtime
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: backend
@@ -138,7 +147,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: daffamusyafa/rs-app-be:v1.0
+          image: daffamusyafa/rs-app-be:v1.1
           imagePullPolicy: Always
           ports:
             - containerPort: 5000
@@ -147,13 +156,24 @@ spec:
                 name: backend-config
             - secretRef:
                 name: backend-secret
+          # Probe Kesehatan Backend
+          readinessProbe:
+            tcpSocket:
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 20
 
 ---
-# Backend Service
 apiVersion: v1
 kind: Service
 metadata:
-  name: backend
+  name: backend-svc
   namespace: rs-app
 spec:
   selector:
@@ -162,14 +182,12 @@ spec:
     - protocol: TCP
       port: 5000
       targetPort: 5000
-  # Tipe LoadBalancer (Sesuai permintaan)
   type: LoadBalancer
 
 ---
 # ===================================================================
-# 5. FRONTEND TIER
+#  4. FRONTEND LAYER
 # ===================================================================
-# Frontend Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -179,6 +197,12 @@ metadata:
     app: frontend
 spec:
   replicas: 3
+  # Strategi Zero Downtime
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: frontend
@@ -193,9 +217,21 @@ spec:
           imagePullPolicy: Always
           ports:
             - containerPort: 80
+          # Probe Kesehatan Frontend
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 20
 
 ---
-# Frontend Service
 apiVersion: v1
 kind: Service
 metadata:
@@ -206,7 +242,6 @@ spec:
     app: frontend
   ports:
     - protocol: TCP
-      port: 8080        # Port yang diakses user
-      targetPort: 80    # Port container aplikasi
-  # Tipe LoadBalancer (Sesuai permintaan)
+      port: 8080
+      targetPort: 80
   type: LoadBalancer
